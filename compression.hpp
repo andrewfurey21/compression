@@ -1,6 +1,7 @@
 #ifndef __COMPRESSION_HPP_HEADER_GUARD
 #define __COMPRESSION_HPP_HEADER_GUARD
 
+#include <compare>
 #include <ostream>
 #include <cassert>
 #include <iostream>
@@ -30,12 +31,11 @@ struct file {
 struct letter_count {
   u64 count = 0;
   u8 letter = 0;
-  bool operator>(const letter_count& other) {
-    return count > other.count;
+
+  std::strong_ordering operator<=>(const letter_count& other) const {
+    return count <=> other.count;
   }
-  bool operator>=(const letter_count& other) {
-    return count >= other.count;
-  }
+
   void inc() { count++; }
   friend std::ostream& operator<<(std::ostream& out, const letter_count& a) {
     out << a.letter << ": " << a.count << "\n";
@@ -120,10 +120,10 @@ void local_array<T, num>::iterative_inplace_quicksort() {
     u64 pivot_index = (end - start) / 2 + start;
 
     while (start < end) {
-      while (this->data[start] > this->data[pivot_index] && start <= pivot_index)
+      while (this->data[start] < this->data[pivot_index] && start <= pivot_index)
         start++;
 
-      while (this->data[pivot_index] >= this->data[end] && end > pivot_index)
+      while (this->data[pivot_index] <= this->data[end] && end > pivot_index)
         end--;
 
       if (start == end) { break; }
@@ -156,6 +156,8 @@ inline void huffman_byte_encode(const file& decoded, file& encoded) {
   }
 
   byte_counts.iterative_inplace_quicksort();
+
+
 
 }
 

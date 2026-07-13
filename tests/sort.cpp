@@ -9,7 +9,7 @@ using namespace compression;
 template <typename local_array_t, u64 local_array_size>
 void expect_sorted(const local_array<local_array_t, local_array_size>& a) {
   for (u64 i = 1; i < local_array_size; i++) {
-    EXPECT_GE(a.data[i - 1], a.data[i]);
+    EXPECT_LE(a.data[i - 1], a.data[i]);
   }
 }
 
