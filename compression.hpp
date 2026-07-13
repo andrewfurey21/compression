@@ -4,6 +4,8 @@
 #include <ostream>
 #include <cassert>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 
 namespace compression {
 
@@ -11,8 +13,34 @@ using u8 = unsigned char;
 using u64 = unsigned long long;
 
 struct file {
-  u8 *data;
+  u8 *data = NULL;
   u64 size;
+
+  explicit file() { data = NULL; size = 0; }
+  explicit file(const char *name) {
+    std::ifstream file_stream(name);
+    size = std::filesystem::file_size(name);
+    data = (u8 *)malloc(size);
+    file_stream.read((char *)data, size);
+  }
+
+  ~file() { free(data); }
+};
+
+struct letter_count {
+  u64 count = 0;
+  u8 letter = 0;
+  bool operator>(const letter_count& other) {
+    return count > other.count;
+  }
+  bool operator>=(const letter_count& other) {
+    return count >= other.count;
+  }
+  void inc() { count++; }
+  friend std::ostream& operator<<(std::ostream& out, const letter_count& a) {
+    out << a.letter << ": " << a.count << "\n";
+    return out;
+  }
 };
 
 template <typename T, u64 num>
@@ -69,9 +97,9 @@ std::ostream& operator<<(std::ostream& out, const local_array<T, num>& a) {
 
 template <typename T, u64 num>
 void local_array<T, num>::swap(u64 i, u64 j) {
-  data[i] ^= data[j];
-  data[j] ^= data[i];
-  data[i] ^= data[j];
+  T temp = data[i];
+  data[i] = data[j];
+  data[j] = temp;
 }
 
 template <typename T, u64 num>
@@ -92,10 +120,10 @@ void local_array<T, num>::iterative_inplace_quicksort() {
     u64 pivot_index = (end - start) / 2 + start;
 
     while (start < end) {
-      while (this->data[start] < this->data[pivot_index] && start <= pivot_index)
+      while (this->data[start] > this->data[pivot_index] && start <= pivot_index)
         start++;
 
-      while (this->data[pivot_index] <= this->data[end] && end > pivot_index)
+      while (this->data[pivot_index] >= this->data[end] && end > pivot_index)
         end--;
 
       if (start == end) { break; }
@@ -119,6 +147,16 @@ void local_array<T, num>::iterative_inplace_quicksort() {
 
 
 inline void huffman_byte_encode(const file& decoded, file& encoded) {
+  local_array<letter_count, 256> byte_counts;
+  for (u64 i = 0; i < 256; i++) {
+    byte_counts.data[i].letter = (u8)i;
+  }
+  for (u64 i = 0; i < decoded.size; i++) {
+    byte_counts.data[decoded.data[i]].inc();
+  }
+
+  byte_counts.iterative_inplace_quicksort();
+
 }
 
 inline void huffman_byte_decode(const file& encoded, file& decoded) {
