@@ -13,6 +13,13 @@ namespace compression {
 using u8 = unsigned char;
 using u64 = unsigned long long;
 
+inline void panic_if(bool expr, const std::string& msg) {
+  if (expr) {
+    std::cerr << msg << "\n";
+    exit(1);
+  }
+}
+
 struct file {
   u8 *data = NULL;
   u64 size;
@@ -38,7 +45,8 @@ struct letter_count {
 
   void inc() { count++; }
   friend std::ostream& operator<<(std::ostream& out, const letter_count& a) {
-    out << a.letter << ": " << a.count << "\n";
+    if (a.count > 0)
+      out << a.letter << ": " << a.count << "\n";
     return out;
   }
 };
@@ -145,6 +153,78 @@ void local_array<T, num>::iterative_inplace_quicksort() {
   }
 }
 
+template <typename NodeType, u64 num_nodes>
+struct binary_heap {
+  static_assert(num_nodes > 0);
+
+  local_array<NodeType, num_nodes + 1> array; // zeroth element is empty.
+  u64 num_inserted = 0;
+
+  void insert(const NodeType& n) {
+    panic_if(num_nodes <= num_inserted, "Too many nodes inserted into heap.");
+    num_inserted++;
+
+    u64 node_index = num_inserted;
+    array.data[node_index] = n;
+
+    while (node_index > 0) {
+      u64 parent_index = node_index / 2;
+      if (array.data[parent_index] > array.data[node_index]) {
+        array.swap(parent_index, node_index);
+        node_index = parent_index;
+      } else {
+        break;
+      }
+    }
+  }
+
+  NodeType remove() {
+    panic_if(num_inserted == 0, "Cannot remove from empty heap.");
+    num_inserted--;
+
+    NodeType copy = array.data[1];
+
+    if (num_inserted == 0) return copy;
+
+    array.data[1] = array.data[num_inserted + 1];
+
+    u64 current = 1;
+    while (true) {
+      u64 parent_1 = current * 2;
+      u64 parent_2 = current * 2 + 1;
+
+      if (parent_1 > num_inserted) break;
+
+      if (parent_2 > num_inserted) {
+        if (array.data[current] > array.data[parent_1]) {
+          array.swap(current, parent_1);
+          current = parent_1;
+        } else break;
+      } else {
+        const NodeType& parent_1_data = array.data[parent_1];
+        const NodeType& parent_2_data = array.data[parent_2];
+
+        if (parent_1_data <= parent_2_data) {
+          if (array.data[current] > parent_1_data) {
+            array.swap(current, parent_1);
+            current = parent_1;
+          } else break;
+
+        } else {
+          if (array.data[current] > parent_2_data) {
+            array.swap(current, parent_2);
+            current = parent_2;
+          } else break;
+
+        }
+      }
+    }
+
+    return copy;
+  }
+
+};
+
 
 inline void huffman_byte_encode(const file& decoded, file& encoded) {
   local_array<letter_count, 256> byte_counts;
@@ -156,11 +236,21 @@ inline void huffman_byte_encode(const file& decoded, file& encoded) {
   }
 
   byte_counts.iterative_inplace_quicksort();
+  // std::cout << byte_counts << "\n";
+
+  u64 num_greater_than_zero = 0;
+  for (u64 i = 0; i < byte_counts.size; i++) {
+    if (byte_counts.data[i].count > 0) num_greater_than_zero++;
+  }
+
+
 
 
 
 }
 
+
+// first 8 * 256 bytes will be ascii table, rest is the compressed file.
 inline void huffman_byte_decode(const file& encoded, file& decoded) {
 
 }
