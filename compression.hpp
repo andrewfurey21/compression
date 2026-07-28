@@ -8,6 +8,7 @@
 #include <fstream>
 #include <filesystem>
 #include <bitset>
+#include <cstring>
 
 namespace compression {
 
@@ -29,6 +30,14 @@ struct file {
 
   explicit file(const char *name) : data(nullptr), size(0), name(name) {}
 
+  static bool compare_equal(const file& a, const file& b) {
+    panic_if(a.size != b.size, "File sizes are not the same.");
+    for (u64 i = 0; i < a.size; i++) {
+      if (a.data[i] != b.data[i]) return false;
+    }
+    return true;
+  }
+
   void read() {
     std::ifstream file_stream(name);
     size = std::filesystem::file_size(name);
@@ -43,8 +52,14 @@ struct file {
   }
 
   void write() {
+    panic_if(strlen(name) == 0, "Cannot write to file with emptry string as file name.");
     std::ofstream file_stream(name);
     file_stream.write((const char*)data, size);
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const file& f) {
+    os.write((const char*)f.data, f.size);
+    return os;
   }
 
   ~file() { free(data); }
@@ -123,8 +138,8 @@ struct range_stack {
 
 template <typename T, u64 num>
 std::ostream& operator<<(std::ostream& out, const local_array<T, num>& a) {
-  for (u64 i = 0; i < a.size; i++) {
-    out << a.data[i] << "  ";
+  for (u64 i = 0; i < a.length; i++) {
+    out << i << ": " << a.data[i] << "  ";
     // if (i < a.size - 1) out << ", ";
   }
   return out;
@@ -414,6 +429,15 @@ u64 compute_length_of_compressed_file(const local_array<code, num>& codes) {
   return (total_num_bits + 8 - 1) / 8;
 }
 
+template <u64 num>
+u64 compute_length_of_decompressed_file(const local_array<code, num>& codes) {
+  u64 total_num_bytes = 0;
+  for (u64 i = 0; i < codes.length; i++) {
+    total_num_bytes += codes.data[i].count;
+  }
+  return total_num_bytes;
+}
+
 inline void get_counts(local_array<letter_count, 256>& counts, const file& f) {
   for (u64 i = 0; i < 256; i++) {
     counts.data[i].letter = (u8)i;
@@ -456,17 +480,17 @@ inline void huffman_encode_using_binary_heap(const file& decoded, file& encoded)
 
   std::cout << "compression ratio: " << (f64)(num_bytes) / decoded.size << "\n";
 
-
   encoded.alloc(num_bytes);
   //header
+  u64 *header = reinterpret_cast<u64 *>(encoded.data);
   for (u64 i = 0; i < max_table_size; i++) {
-    *(encoded.data + i * 8) = byte_counts.data[i].count;
+    header[i] = byte_counts.data[i].count;
   }
 
   u64 encoded_index = max_table_size * 8;
-  u64 bit_counter = 7;
+  u64 bit_counter = 8;
   u8 current_byte = 0;
-  for (u64 decoded_index = 0; decoded_index < num_bytes; decoded_index++) {
+  for (u64 decoded_index = 0; decoded_index < decoded.size; decoded_index++) {
 
     char lookup = decoded.data[decoded_index];
     bool found = false;
@@ -480,23 +504,101 @@ inline void huffman_encode_using_binary_heap(const file& decoded, file& encoded)
     }
     panic_if(!found, "Could not find code when encoding.");
 
-    for (u8 i = 0; i < c.length; i++) {
-      current_byte |= ((c.bits >> i) & 1) << bit_counter;
+    for (u64 i = 0; i < c.length; i++) {
+      current_byte |= ((c.bits >> i) & 1) << (bit_counter - 1);
       bit_counter--;
       if (bit_counter == 0) {
+        assert(encoded_index < encoded.size);
         encoded.data[encoded_index] = current_byte;
         encoded_index++;
-        bit_counter = 7;
+        bit_counter = 8;
         current_byte = 0;
       }
     }
   }
+  if (encoded_index == encoded.size - 1) {// round off the last byte
+    assert(bit_counter != 8);
+    encoded.data[encoded_index] = current_byte;
+    encoded_index++;
+  }
+
+  assert(encoded_index == encoded.size);
 }
 
-
 // needs some sort of header
-inline void huffman_byte_decode(const file& encoded, file& decoded) {
+inline void huffman_decode_using_binary_heap(const file& encoded, file& decoded) {
+  constexpr u64 max_table_size = 256;
+  local_array<letter_count, max_table_size> byte_counts;
 
+  u64 *header = reinterpret_cast<u64*>(encoded.data);
+  u64 num_bytes_decoded = 0;
+  for (u64 i = 0; i < max_table_size; i++) {
+    byte_counts.push_back(letter_count{header[i], (u8)i});
+    num_bytes_decoded += header[i];
+  }
+
+  // copied from encode
+  using tree_t = binary_tree<max_table_size * 2>;
+  tree_t tree; // 256 * 2 - 1 is max needed, if all bytes are equally likely, +1 for a garbage node. so 256 * 2 in total.
+  binary_heap<tree_t::node_ptr, max_table_size> heap;
+  for (u64 i = 0; i < byte_counts.size; i++) {
+    if (byte_counts.data[i].count > 0) {
+      tree_t::node_ptr n = tree.new_node(tree_t::node_ptr{nullptr}, tree_t::node_ptr{nullptr}, byte_counts.data[i]);
+      heap.insert(n);
+    }
+  }
+
+  while (heap.top().p->count.count != num_bytes_decoded) { // lol looks awful.
+    tree_t::node_ptr p1 = heap.remove();
+    tree_t::node_ptr p2 = heap.remove();
+    letter_count total_count = {p1.p->count.count + p2.p->count.count, 0};
+    tree_t::node_ptr n = tree.new_node(p1, p2, total_count);
+    heap.insert(n);
+  }
+
+  tree_t::node_ptr top_of_tree = heap.remove();
+  assert(heap.num_inserted == 0);
+
+  local_array codes = tree.get_codes(byte_counts, top_of_tree);
+  u64 max_bit_length = 0;
+  for (u64 i = 0; i < codes.length; i++) {
+    if (codes.data[i].length > max_bit_length) max_bit_length = codes.data[i].length;
+  }
+  assert(compute_length_of_compressed_file(codes) + max_table_size * 8 == encoded.size);
+
+  decoded.alloc(num_bytes_decoded);
+
+  u64 current_code = 0;
+  code correct_code = {0};
+
+  u64 encoded_bit_offset = 0;
+  for (u64 decoded_index = 0; decoded_index < decoded.size; decoded_index++) {
+    bool found_code = false;
+    for (u64 num_bits = 0; num_bits < max_bit_length; num_bits++) {
+
+      u8 current_byte = encoded.data[max_table_size * 8 + encoded_bit_offset / 8];
+      u8 remainder = encoded_bit_offset % 8;
+
+      u8 current_bit = (current_byte >> (8 - remainder - 1)) & 1;
+      current_code |= current_bit << num_bits;
+
+      for (u64 i = 0; i < codes.length; i++) {
+        if ((num_bits + 1) == codes.data[i].length && codes.data[i].bits == current_code) {
+          found_code = true;
+          correct_code = codes.data[i];
+        }
+      }
+
+      encoded_bit_offset++;
+      if (found_code) {
+        decoded.data[decoded_index] = correct_code.letter;
+        current_code = 0;
+        break;
+      }
+    }
+
+    panic_if(!found_code, "Unknown code in encoded file.");
+  }
 }
 
 };

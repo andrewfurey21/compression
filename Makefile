@@ -1,7 +1,10 @@
-all: example
+all: compress decompress
 
-example: ./example.cpp ./compression.hpp
-	g++ example.cpp -o example -g -std=c++20
+compress: ./compress.cpp ./compression.hpp
+	g++ compress.cpp -o compress -O3 -std=c++20
+
+decompress: ./decompress.cpp ./compression.hpp
+	g++ decompress.cpp -o decompress -O3 -std=c++20
 
 clean:
 	rm -rf example

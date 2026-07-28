@@ -1,4 +1,5 @@
 sort
-example
 .clangd
 ./data/compressed
+compress
+decompress
